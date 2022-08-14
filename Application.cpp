@@ -25,24 +25,38 @@ void printCoordinates() {
 	std::cout << "X: " << player.Position.x * 16 << std::endl;
 	std::cout << "Y: " << player.Position.y * 16 << std::endl;
 	std::cout << "Z: " << player.Position.z * 16 << std::endl;
+	std::cout << "X CHUNK: " << player.xChunk << std::endl;
+	std::cout << "Z CHUNK: " << player.zChunk << std::endl;
 }
 
 void processInputs( GLFWwindow* window ) {
 	if( glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ) {
 		player.processKeyboard(C_FORWARD, deltaTime);
 		printCoordinates();
+		if ( player.updateWorldData ) {
+			currApp->world->updateRender(player.xChunk, player.zChunk);
+		}
 	}
 	if( glfwGetKey( window, GLFW_KEY_S ) == GLFW_PRESS ) {
 		player.processKeyboard( C_BACKWARD, deltaTime );
 		printCoordinates();
+		if ( player.updateWorldData ) {
+			currApp->world->updateRender(player.xChunk, player.zChunk);
+		}
 	}
 	if( glfwGetKey( window, GLFW_KEY_A ) == GLFW_PRESS ) {
 		player.processKeyboard( C_LEFT, deltaTime );
 		printCoordinates();
+		if ( player.updateWorldData ) {
+			currApp->world->updateRender(player.xChunk, player.zChunk);
+		}
 	}
 	if( glfwGetKey( window, GLFW_KEY_D ) == GLFW_PRESS ) {
 		player.processKeyboard( C_RIGHT, deltaTime );
 		printCoordinates();
+		if ( player.updateWorldData ) {
+			currApp->world->updateRender(player.xChunk, player.zChunk);
+		}
 	}
 
 	if( glfwGetKey( window, GLFW_KEY_LEFT_ALT ) == GLFW_PRESS ) {
@@ -73,6 +87,8 @@ void processInputs( GLFWwindow* window ) {
 	if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS ) {
 		glfwSetWindowShouldClose( window, GLFW_TRUE );
 	}
+
+	player.updateWorldData = false;
 }
 
 static void mouseMovementCallback( GLFWwindow* window, double xPos, double yPos ) {

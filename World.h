@@ -29,6 +29,8 @@ public:
 	unsigned int* releaseIndices();
 	unsigned int getIndexCount();
 
+	void updateRender(int xChunk, int zChunk);
+
 	struct Block {
 		int blockID;
 		glm::vec3 blockCoordinates;
@@ -42,6 +44,12 @@ public:
 		Chunk chunks[RENDER_DISTANCE][RENDER_DISTANCE];
 		float xOrigin;
 		float zOrigin;
+
+		// Ringbuffer indices
+		int xHead;
+		int xTail;
+		int zHead;
+		int zTail;
 	};
 
 	typedef struct VertData{
@@ -106,11 +114,13 @@ private:
 	void generateChunk( Chunk* chunk ); // SHould delete this one
 	void generateChunk(Chunk* chunk, int x, int y, int z);
 
-	void createRenderMesh( Chunk* chunk, DrawFace omittedFaces, unsigned int xOffset, unsigned int zOffset );
+	void createRenderMesh( Chunk* chunk, DrawFace omittedFaces, int xOffset, int zOffset );
 	void handleUpdate(); //-> TBD
 	void initTestChunk();
 
 	void generateRenderGroup(RenderGroup* group);
+
+	void updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOrigin);
 
 	/* Need a way to connect adjacent chunks generated with perlin noise */
 	/* What can be done is generate 14x14 noise instead of 16x16 */

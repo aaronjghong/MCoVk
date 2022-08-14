@@ -15,7 +15,7 @@ enum Camera_Movement {	// Camera movement enum
 // Default parameters
 const float D_YAW = -90.0f;
 const float D_PITCH = 0.0f;
-const float D_SPEED = 0.0001f;
+const float D_SPEED = 0.01f;
 const float D_SENSITIVITY = 0.1f;
 const float D_ZOOM = 60.0f;			// Personal 60 fov preference
 
@@ -39,6 +39,11 @@ public:
 	float MovementSpeed;
 	float MouseSensitivity;
 	float Zoom;
+
+	int xChunk;
+	int zChunk;
+
+	bool updateWorldData = false;
 
 	// Constructor (vectors)
 	Camera( glm::vec3 position = glm::vec3( 0.0f, 0.0f, 0.0f ), glm::vec3 up = glm::vec3( 0.0f, 1.0f, 0.0f ), float yaw = D_YAW, float pitch = D_PITCH ) : Front( glm::vec3( 0.0f, 0.0f, 1.0f ) ), MovementSpeed( D_SPEED ), MouseSensitivity( D_SENSITIVITY ), Zoom( D_ZOOM )
@@ -68,7 +73,7 @@ public:
 	// Process input from keyboard using defined ENUM
 	void processKeyboard( Camera_Movement direction, float deltaTime )
 	{
-		float velocity = MovementSpeed * deltaTime;
+		float velocity = MovementSpeed;// *deltaTime;
 		if( direction == C_FORWARD )
 			Position += Front * velocity;
 		if( direction == C_BACKWARD )
@@ -77,6 +82,20 @@ public:
 			Position -= Right * velocity;
 		if( direction == C_RIGHT )
 			Position += Right * velocity;
+
+		// No need to divide by 16 since player coords are in 1/16th scale
+		int currXChunk = Position.x; 
+		int currZChunk = Position.z;
+
+		if ( xChunk != currXChunk ) {
+			xChunk = currXChunk;
+			updateWorldData = true;
+		}
+		if ( zChunk != currZChunk ) {
+			zChunk = currZChunk;
+			updateWorldData = true;
+		}
+
 	}
 
 	// Processes X/Y offset into yaw/pitch changes respectively

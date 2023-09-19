@@ -52,6 +52,8 @@ public:
 		WorldUp = up;
 		Yaw = yaw;
 		Pitch = pitch;
+		xChunk = std::floor(position.x);
+		zChunk = std::floor(position.z);
 		updateCameraVectors();
 	}
 	// Constructor (values)
@@ -61,6 +63,8 @@ public:
 		WorldUp = glm::vec3( upX, upY, upZ );
 		Yaw = yaw;
 		Pitch = pitch;
+		xChunk = std::floor(posX);
+		zChunk = std::floor(posZ);
 		updateCameraVectors();
 	}
 
@@ -84,8 +88,8 @@ public:
 			Position += Right * velocity;
 
 		// No need to divide by 16 since player coords are in 1/16th scale
-		int currXChunk = Position.x; 
-		int currZChunk = Position.z;
+		int currXChunk = std::floor(Position.x); 
+		int currZChunk = std::floor(Position.z);
 
 		if ( xChunk != currXChunk ) {
 			xChunk = currXChunk;

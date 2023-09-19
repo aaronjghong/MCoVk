@@ -20,7 +20,6 @@ static void s_GenerateVerticalFaceLR(std::vector<World::VertData>* meshVertices,
 static void s_GenerateVerticalFaceFB(std::vector<World::VertData>* meshVertices, std::vector<unsigned int>* meshIndices, int x, int y, int z, World::DrawFace face);
 static void s_IncrementRingBufferPointer(int& idx);
 static void s_DecrementRingBufferPointer(int& idx);
-static void s_SetAndCheckConnectingFaces(World::RenderGroup* group, World::DrawFace connFaces[RENDER_DISTANCE][RENDER_DISTANCE][16][256][16], int i, int j, bool doX, bool doZ);
 
 World::World() {
 	srand(time(NULL));
@@ -35,19 +34,26 @@ World::World() {
 	renderMeshIndices = new std::vector<std::vector<unsigned int>>;
 	renderMeshIndicesFlattened = new std::vector<unsigned int>;
 
+	threadList.clear();
 	
 	//initTestChunk();
 	//createRenderMesh(testChunk);
 	testGroup = new RenderGroup();
-	testGroup->xOrigin = 3;
-	testGroup->zOrigin = 3;
+	testGroup->xOrigin = 16;
+	testGroup->zOrigin = 16;
 
 	testGroup->xHead = 0;
 	testGroup->xTail = RENDER_DISTANCE - 1;
 	testGroup->zHead = 0;
 	testGroup->zTail = RENDER_DISTANCE - 1;
 
-	generateRenderGroup(testGroup);
+	for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+		for ( int j = 0; j < RENDER_DISTANCE; j++ ) {
+			testGroup->chunksToUpdate[i][j] = true;
+		}
+	}
+
+	generateRenderGroup2(testGroup);
 
 	vFlattenedDirty = true;
 	iFlattenedDirty = true;
@@ -65,10 +71,21 @@ World::~World() {
 	delete noise;
 
 	delete testChunk;
+
+	for ( auto& thread : threadList ) {
+		thread->join();
+		delete thread;
+	}
 }
 
 float* World::releaseVertexData() {
 	if ( vFlattenedDirty ) {
+		for ( auto& thread : threadList ) {
+			thread->join();
+			delete thread;
+		}
+		threadList.clear();
+
 		renderMeshVerticesFlattened->clear();
 		for ( auto& v : *renderMeshVertices ) {
 			renderMeshVerticesFlattened->insert(renderMeshVerticesFlattened->end(), v.begin(), v.end());
@@ -81,6 +98,12 @@ float* World::releaseVertexData() {
 
 unsigned int World::getVertexCount() {
 	if ( vFlattenedDirty ) {
+		for ( auto& thread : threadList ) {
+			thread->join();
+			delete thread;
+		}
+		threadList.clear();
+
 		renderMeshVerticesFlattened->clear();
 		for ( auto& v : *renderMeshVertices ) {
 			renderMeshVerticesFlattened->insert(renderMeshVerticesFlattened->end(), v.begin(), v.end());
@@ -93,6 +116,13 @@ unsigned int World::getVertexCount() {
 
 unsigned int* World::releaseIndices() {
 	if ( iFlattenedDirty ) {
+		for ( auto& thread : threadList ) {
+			thread->join();
+			delete thread;
+		}
+		threadList.clear();
+
+
 		for ( auto& v : *renderMeshIndices ) {
 			renderMeshIndicesFlattened->insert(renderMeshIndicesFlattened->end(), v.begin(), v.end());
 		}
@@ -104,6 +134,12 @@ unsigned int* World::releaseIndices() {
 
 unsigned int World::getIndexCount() {
 	if ( iFlattenedDirty ) {
+		for ( auto& thread : threadList ) {
+			thread->join();
+			delete thread;
+		}
+		threadList.clear();
+
 		for ( auto& v : *renderMeshIndices ) {
 			renderMeshIndicesFlattened->insert(renderMeshIndicesFlattened->end(), v.begin(), v.end());
 		}
@@ -512,15 +548,38 @@ void World::generateRenderGroup(RenderGroup* group) {
 	} 
 }
 
+template <typename t>
+void s_CopyVector(std::vector<t>& dest, std::vector<t>& target)
+{
+	dest.clear();
+	dest.resize(target.size());
+	for ( size_t i = 0; i < target.size(); i++ ) {
+		dest[i] = target[i];
+	}
+}
+
 void World::generateRenderGroup2(RenderGroup* group) {
 	// Reset num verts
 	currNumVertices = 0;
 
-	for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
-		for ( int j = 0; j < RENDER_DISTANCE; j++ ) {
+	// For now will only run once, but if render distances are to be a user
+	// setting, this will allow rescaling of these vertices
+	if ( renderMeshVertices->size() < RENDER_DISTANCE * RENDER_DISTANCE ) {
+		renderMeshVertices->resize(RENDER_DISTANCE * RENDER_DISTANCE);
+		renderMeshIndices->resize(RENDER_DISTANCE * RENDER_DISTANCE);
+	}
 
-			int xOffset = (i * 16) + group->xOrigin;
-			int zOffset = (j * 16) + group->zOrigin;
+	// Need to iter from xHead->xTail, zHead->zTail to keep track of proper 
+	// relative space due to ring buffer sys
+	bool doneX = false;
+	int i = group->xHead;
+	while ( !doneX ) {
+		bool doneZ = false;
+		int j = group->zHead;
+		while ( !doneZ ) {
+			// Subtract by radius since middle is treated as 0,0 
+			int xOffset = ((i - RENDER_RADIUS) * 16) + group->xOrigin;
+			int zOffset = ((j - RENDER_RADIUS) * 16) + group->zOrigin;
 
 			generateChunk(&group->chunks[i][j], xOffset, 0, zOffset);
 			createRenderMesh2(&group->chunks[i][j], xOffset, zOffset);
@@ -528,9 +587,18 @@ void World::generateRenderGroup2(RenderGroup* group) {
 			currNumVertices += meshVertices->size();
 
 			// Not sure if it's correct to push values instead of addresses
-			renderMeshVertices->push_back(*meshVertices);
-			renderMeshIndices->push_back(*meshIndices);
+			int renderMeshIdx = i * RENDER_DISTANCE + j;
+
+			(*renderMeshVertices)[renderMeshIdx].assign(meshVertices->begin(), meshVertices->end());
+			(*renderMeshIndices)[renderMeshIdx].assign(meshIndices->begin(), meshIndices->end());
+
+			s_IncrementRingBufferPointer(j);
+			if ( j == group->zHead )
+				doneZ = true;
 		}
+		s_IncrementRingBufferPointer(i);
+		if ( i == group->xHead )
+			doneX = true;
 	}
 }
 
@@ -557,7 +625,8 @@ void World::generateChunk(Chunk* chunk, int x, int y, int z) {
 }
 
 void World::updateRender(int xChunk, int zChunk) {
-	updateRenderGroup(testGroup, xChunk * 16.0f, zChunk * 16.0f);
+	std::thread *t = new std::thread(&World::updateRenderGroup, this, testGroup, xChunk * 16.0f, zChunk * 16.0f);
+	threadList.push_back(t);
 
 	// Flag that changes were made
 	vFlattenedDirty = true;
@@ -568,41 +637,15 @@ void World::updateRender(int xChunk, int zChunk) {
 void World::updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOrigin) {
 	// Update Rendergroup ring buffer with new chunk data
 	// Need to remove unused chunks, and introduce new ones
-	// Need to get new connecting faces as well
-	// Maybe can have createRenderGroup go from Head -> Target (separate variable)
-	//	Where target = RENDER_DISTANCE - 1 initially but is updated to appropriate indices
-	//	Swap i = 0, j = 0 checks to i = head, j = head?
-
-
 	float prevXOrigin = group->xOrigin;
 	float prevZOrigin = group->zOrigin;
 
-	group->xOrigin = newXOrigin - 8;
-	group->zOrigin = newZOrigin - 8;
-
-	// new_Origin determines player's current location
-	// We want rendergroup to center the player
-	// IF render distance is even, the new origin should be the input origin minus half of renderdistance * 16
-	// IF odd, new origin should be the input origin minus (floor(renderdistance / 2) plus eight)
-
-	int isOdd = ((RENDER_DISTANCE % 2) != 0) ? 1 : 0;
-
-	group->xOrigin = newXOrigin - (((RENDER_DISTANCE / 2) * 16) + (8 * isOdd));
-	group->zOrigin = newZOrigin - (((RENDER_DISTANCE / 2) * 16) + (8 * isOdd));
-
-	// THIS IS ABSOLUTE TRASH
-	renderMeshVertices->clear();
-	renderMeshIndices->clear();
-
-	generateRenderGroup2(group);
-	return;
-	// THIS IS ABSOLUTE TRASH
-	// TODO: Work on ring buffer using *new* (unoptimized) render funcs
-	// 
+	group->xOrigin = newXOrigin;
+	group->zOrigin = newZOrigin;
 
 	// WIP
-	if ( prevXOrigin != newXOrigin ) {
-		if ( prevXOrigin < newXOrigin ) {
+	if ( prevXOrigin != group->xOrigin ) {
+		if ( prevXOrigin > group->xOrigin ) {
 			// Push front (Add element at decremented head)
 			s_DecrementRingBufferPointer(group->xHead);
 			s_DecrementRingBufferPointer(group->xTail);
@@ -619,76 +662,37 @@ void World::updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOr
 			}
 		}
 	}
-	// Then need to repeat the same for z and in generateRenderGroup2, need to
-	// only generate chunks marked for updating
-	// The issue is that meshdata is stored altogether so we need to update
-	// How we store the verts & inds to render cause we need to selectively
-	// clear verts and indices instead of re-creating all
-	// WIP
 
-	// This assumes that only a movement of a chunk at a time is allowed
-	// RenderGroup stores chunks as chunks[col][col item]
-	// Need to call generate chunk on correct indices
-	// Need to generate connecting faces on correct indices
-	// Need to rewrite correct indices of rendermeshvertices and rendermeshindices after calling createrendermesh
+	if ( prevZOrigin != group->zOrigin ) {
+		if ( prevZOrigin > group->zOrigin ) {
+			// Push front (add to head)
+			s_DecrementRingBufferPointer(group->zHead);
+			s_DecrementRingBufferPointer(group->zTail);
+			for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+				group->chunksToUpdate[i][group->zHead] = true;
+			}
 
-	if ( prevXOrigin != newXOrigin ) {
-		int xStart, xEnd; // Pointers for con face generation
-		bool generateChunkFlag = false;
-		if ( prevXOrigin < newXOrigin ) {
-			// Push front (Add element at decremented head)
-			s_DecrementRingBufferPointer(group->xHead);
-			s_DecrementRingBufferPointer(group->xTail);
-			xStart = group->xHead;
-			xEnd = group->xHead;
-			s_IncrementRingBufferPointer(xEnd);
-			generateChunkFlag = true; // xStart is new Chunk
 		}
 		else {
-			// Push back (Add element at incremented tail)
-			s_IncrementRingBufferPointer(group->xHead);
-			s_IncrementRingBufferPointer(group->xTail);
-			xStart = group->xTail;
-			xEnd = group->xTail;
-			s_DecrementRingBufferPointer(xStart);
-			generateChunkFlag = false; // xStart is not new Chunk, wait until second iteration
-		}
-
-		// After setting X ringbuffer operation pointers iterate and generate new chunk data
-		for ( int i = xStart; i != xEnd; s_IncrementRingBufferPointer(i) ) {
-			for ( int j = 0; j < RENDER_DISTANCE; j++ ) {
-				if ( generateChunkFlag ) {
-					//Need to figure out offsets for chunks
-					//generateChunk(&group->chunks[i][j], , 0, );
-				}
-				else{
-					// If chunk was not generated in this pass, it must be generated in the next
-					generateChunkFlag = true;
-				}
-
-				if ( i == xEnd) {
-					// If we've reached the end pointer, we know that there is a chunk prior to generate connecting faces with
-					s_SetAndCheckConnectingFaces(group, connFaces, i, j, true, true);
-				}
+			// Push back (add to tail)
+			s_IncrementRingBufferPointer(group->zHead);
+			s_IncrementRingBufferPointer(group->zTail);
+			for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+				group->chunksToUpdate[i][group->zTail] = true;
 			}
 		}
 	}
-	if ( prevZOrigin != newZOrigin ) {
-		int zStart, zEnd;
-		for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
-			for ( int j = zStart; j != zEnd; s_IncrementRingBufferPointer(j) ) {
-				
-			}
-		}
-	}
+
+	generateRenderGroup2(group);
 }
 
-void World::generateConnectingBlocks(Chunk& cUL, Chunk& cUR, Chunk& cBL, Chunk& cBR) {
-	// TBD
+void World::generateChunksInBackground(RenderGroup* group) {
+	// To be called by a separate thread
+	// For each chunk to be background generated, create a thread that contains
+	// it's own mesh and indices lists
+
+	return;
 }
-
-
-
 
 
 static void s_CallVertexGenCommands(std::vector<World::VertData>* meshVertices, std::vector<unsigned int>* meshIndices, bool& top, bool& bot, bool& l, bool& r, bool& front, bool& back, int x, int y, int z) {
@@ -965,102 +969,3 @@ static void s_IncrementRingBufferPointer(int& idx) {
 static void s_DecrementRingBufferPointer(int& idx) {
 	idx = (idx == 0) ? (RENDER_DISTANCE - 1) : (idx - 1);
 }
-
-static void s_SetAndCheckConnectingFaces(World::RenderGroup* group, World::DrawFace connFaces[RENDER_DISTANCE][RENDER_DISTANCE][16][256][16], int i, int j, bool doX, bool doZ) {
-	if ( ( i > 0 )  &&  doX ) {
-		// Check edges with chunk to the left
-		for ( int k = 0; k < 16; k++ ) {
-			for ( int y = 255; y > 0; y-- ) {
-				if ( group->chunks[i][j].data[0][y][k].blockID && !(group->chunks[i - 1][j].data[15][y][k].blockID) ) {
-					// Right is higher than left, signal to right group to gen leftfaces
-					connFaces[i][j][0][y][k] = (World::DrawFace)(connFaces[i][j][0][y][k] | World::DRAW_FACE_LEFT);
-				}
-				else if ( !(group->chunks[i][j].data[0][y][k].blockID) && group->chunks[i - 1][j].data[15][y][k].blockID ) {
-					// Left is higher than right, signal to left group to gen right faces
-					connFaces[i - 1][j][15][y][k] = (World::DrawFace)(connFaces[i - 1][j][15][y][k] | World::DRAW_FACE_RIGHT);
-				}
-			}
-		}
-	}
-	if ( ( j > 0 ) && doZ ) {
-		// Check edges with chunk behind
-		for ( int k = 0; k < 16; k++ ) {
-			for ( int y = 255; y > 0; y-- ) {
-				if ( group->chunks[i][j].data[k][y][0].blockID && !(group->chunks[i][j - 1].data[k][y][15].blockID) ) {
-					// Front is higher than back, signal to front to gen back faces
-					connFaces[i][j][k][y][0] = (World::DrawFace)(connFaces[i][j][k][y][0] | World::DRAW_FACE_FRONT);
-				}
-				else if ( !(group->chunks[i][j].data[k][y][0].blockID) && group->chunks[i][j - 1].data[k][y][15].blockID ) {
-					// Back is higher, signal to back to gen front faces
-					connFaces[i][j - 1][k][y][15] = (World::DrawFace)(connFaces[i][j - 1][k][y][15] | World::DRAW_FACE_BACK);
-				}
-			}
-		}
-	}
-}
-
-/*
-
-	Realistically, I don't need to care about edges for a render group (i.e. first chunk 0,0 or last chunk 15,15
-	Whenever I move a chunk, I should re-generate a render group with the x,z offsets
-		However, this is non-ideal as that means that i may lose connecting block faces and need to re-find them
-		I may also lose chunk data itself and need to re-retrieve it from the perlin noise function
-			This issue persists for both when regenerating chunks that will stay in the render group as well as for returning chunks that have been rendered before
-
-	Chunk heightmap lookup is fairly quick so for now, no need to store chunk data itself?
-		But what if a change is made within the chunk and it needs to be re-rendered after exiting the render group
-			Changes to chunks should be stored -> For later?
-
-	If a chunk is already rendered and will continue to be rendered after a new render group is generated, its data should not be released
-	Any chunk leaving the rendergroup should have connecting face data stored
-
-	Rendergroups can behave like 2 ring buffers, updating the X/Z origins to "load in" new chunks 
-		That way persisting chunks stay
-		Need to keep separate head and tail pointers/indices for x and z axes
-		Should re-modify connecting faces such that:
-			A) Chunk iteration uses head and tail pointers/indices 
-			B) Pre-existing connecting faces do not get re-generated 
-				Maybe have a flag for each chunk?
-					0 - No faces generated
-					1 - Face generated in the x direction
-					2 - Face generated in the z direction
-					3 - All faces generated
-
-		Realistically, a change of more than 1 chunk at a time cannot happen meaning if we store the previous offsets, we should know which chunks are new
-			If more than 1 chunk change is made, we can either re-gen or keep a flag with each chunk 
-
-	Store changes to chunks within a file with the seed as the header
-
-
-	We could have a map with a lookup for rendergroups / chunk data?
-		That means we still need to store and find some way to get rid of it?
-			Store nearest Z x Z render groups? and discard and re-gen
-
-
-	World
-	-> Render Group
-	-> World Data 
-		-> Changes to chunks and their offset locations?
-	-> Vertices
-	-> Indices
-	-> Seed
-
-
-
-
-
-
-
-
-	OR
-	
-	A render group must be centered around the player coordinates
-
-	Every 16 blocks, we update the render group origins
-
-	When grabbing world data, first grab from perlin noise, then grab from external file / local cache of modifications
-
-	The renderbuffer should still be a 2 ring buffer system?
-
-
-*/

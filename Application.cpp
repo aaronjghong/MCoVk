@@ -4,7 +4,7 @@
 #include "stb_image.h"
 
 /* LOCAL VARS */
-static Camera player( glm::vec3( 2.0f, 2.0f, 2.0f ) );
+static Camera player( glm::vec3( 1.5f, 3.0f, 1.5f ) );
 static float deltaTime;
 static float lastX = 400;
 static float lastY = 400;

@@ -9,11 +9,15 @@
 #include <map>
 #include "PerlinNoise.h"
 #include <time.h>
+#include <thread>
+#include <functional>
 
 #include <iostream>	// Remove this later
 
+#define RENDER_RADIUS 3
+#define RENDER_DISTANCE ((2 * RENDER_RADIUS) + 1)
+#define GEN_DISTANCE (RENDER_DISTANCE + 2)
 
-#define RENDER_DISTANCE 2
 static int WORLD_MAX_INDICES{};// = 36 * 8 * 8 * 128;
 
 class World {
@@ -112,6 +116,8 @@ private:
 
 	PerlinNoise* noise;
 
+	std::vector<std::thread *> threadList;
+
 	void generateChunk( Chunk* chunk ); // SHould delete this one
 	void generateChunk(Chunk* chunk, int x, int y, int z);
 
@@ -122,7 +128,7 @@ private:
 	void generateRenderGroup(RenderGroup* group);
 
 	/*
-	* KISS Philosophy
+	* KISS
 	* It will take more computing time to omit storing chunk faces than it is 
 	* to render them out
 	* 
@@ -138,37 +144,9 @@ private:
 	void generateRenderGroup2(RenderGroup* group); // Testing cause og function is trash
 	void createRenderMesh2(Chunk* chunk, int xOffset, int zOffset);
 
-
 	void updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOrigin);
 
-	/* Need a way to connect adjacent chunks generated with perlin noise */
-	/* What can be done is generate 14x14 noise instead of 16x16 */
-	/* Then we can random + average blocks between the 4 chunks */
-	/* Instead of on a chunk by chunk basis, we do it on a rendergroup bases? */
-	void generateConnectingBlocks(Chunk& cUL, Chunk& cUR, Chunk& cBL, Chunk& cBR);
-
-
-	/* 
-	* We want to have chunks grouped in rendergroups
-	* New render groups should be generated each time a player enters a render group
-	* We know when a player enteres a new render group when their coordinates are in certain intervals 16 * RENDER_DISTANCE
-	* When this occurs, query the worldData map on the 3 adjacent currently unvisited render groups
-	* For each, if no render group exists, generate one 
-	* We might need a function of re-creating rendergroups with existing block data if we plan to implement variable render distance
-	* 
-	* 
-	* For generating the render mesh, we can make calls on the chunk level for placing/breaking blocks
-	* but generally make calls on rendergroup level and store the meshes in a 16x16 array?
-	* If we move the vertex and index buffer control to World, we can then selectively bind and draw selected vertex buffers much better
-	* 
-	* 
-	* We can store with the renderGrouup a meshRenderGroup and indicesRenderGroup which store RENDER_DISTANCE x RENDER_DISTANCE separate meshes 
-	* Then we can iterate and selectively "regenerate" meshes for updates
-	* Then for createRenderMesh, add new params specifying whether or not a certain "side" should be drawn i.e. all left faces shoud not be drawn,
-	* or right faces should not be drawn, etc. We can then set these params to generate a "smooth" surface for each render group without 
-	* redundant inner faces
-	* 
-	*/
+	void generateChunksInBackground(RenderGroup* group);
 };
 
 #endif

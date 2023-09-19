@@ -302,30 +302,26 @@ void World::createRenderMesh( Chunk *chunk, DrawFace omittedFaces, int xOffset, 
 					//top = !(omittedFaces & DRAW_FACE_TOP);
 					//bot = !(omittedFaces & DRAW_FACE_BOTTOM);
 
-					bool onEdge = false;
 
 					if ( x == 0 ) {
 						l = !(omittedFaces & DRAW_FACE_LEFT);
-						onEdge = true;
 					}
 					if ( x == 15 ) {
 						r = !(omittedFaces & DRAW_FACE_RIGHT);
-						onEdge = true;
 					}
 					if ( z == 0 ) {
 						front = !(omittedFaces & DRAW_FACE_FRONT);
-						onEdge = true;
 					}
 					if ( z == 15 ) {
 						back = !(omittedFaces & DRAW_FACE_BACK);
-						onEdge = true;
 					}
 
 
 					int j = connectingFacesIdx % RENDER_DISTANCE;
 					int i = (connectingFacesIdx - j) / RENDER_DISTANCE;
 					// Poses issue as is since only one face is represented at a time
-					if ( connFaces[i][j][x][y][z] != DRAW_FACE_NONE ) {
+					// Commented out for generateRenderGroup2
+					/*if ( connFaces[i][j][x][y][z] != DRAW_FACE_NONE ) {
 						DrawFace face = connFaces[i][j][x][y][z];
 						if ( (face & DRAW_FACE_TOP) == DRAW_FACE_TOP ) {
 							top = true;
@@ -345,7 +341,7 @@ void World::createRenderMesh( Chunk *chunk, DrawFace omittedFaces, int xOffset, 
 						if ( (face & DRAW_FACE_BACK) == DRAW_FACE_BACK ) {
 							back = true;
 						}
-					}
+					}*/
 
 
 					s_CallVertexGenCommands(meshVertices, meshIndices, top, bot, l, r, front, back, x + xOffset, y, z + zOffset);
@@ -358,6 +354,34 @@ void World::createRenderMesh( Chunk *chunk, DrawFace omittedFaces, int xOffset, 
 
 	/* Reset index to not re-trigger unless explicitly specified */
 	connectingFacesIdx = -1;
+}
+
+void World::createRenderMesh2(Chunk* chunk, int xOffset, int zOffset) {
+	bool startedMesh = false;
+	meshVertices->clear();
+	meshIndices->clear();
+	numVertices = currNumVertices;
+
+
+	for ( int y = 255; y >= 0; y-- ) {
+		for ( int x = 0; x < 16; x++ ) {
+			for ( int z = 0; z < 16; z++ ) {
+				if ( chunk->data[x][y][z].blockID != 0 ) {
+					bool top, bot, l, r, front, back;
+
+					if ( !startedMesh )
+					{
+						startedMesh = true;
+					}
+
+					s_SetVertexGenFlags(chunk, top, bot, l, r, front, back, x, y, z);
+
+					s_CallVertexGenCommands(meshVertices, meshIndices, top, bot, l, r, front, back, x + xOffset, y, z + zOffset);
+					s_ResetVertexGenFlags(top, bot, l, r, front, back);
+				}
+			}
+		}
+	}
 }
 
 void World::initTestChunk() {
@@ -488,6 +512,28 @@ void World::generateRenderGroup(RenderGroup* group) {
 	} 
 }
 
+void World::generateRenderGroup2(RenderGroup* group) {
+	// Reset num verts
+	currNumVertices = 0;
+
+	for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+		for ( int j = 0; j < RENDER_DISTANCE; j++ ) {
+
+			int xOffset = (i * 16) + group->xOrigin;
+			int zOffset = (j * 16) + group->zOrigin;
+
+			generateChunk(&group->chunks[i][j], xOffset, 0, zOffset);
+			createRenderMesh2(&group->chunks[i][j], xOffset, zOffset);
+
+			currNumVertices += meshVertices->size();
+
+			// Not sure if it's correct to push values instead of addresses
+			renderMeshVertices->push_back(*meshVertices);
+			renderMeshIndices->push_back(*meshIndices);
+		}
+	}
+}
+
 void World::generateChunk(Chunk* chunk, int x, int y, int z) {
 	/* Where x,y,z are the coordinates where the chunk "begins" */
 	/* well, y doesn't really matter, but still */
@@ -548,9 +594,37 @@ void World::updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOr
 	renderMeshVertices->clear();
 	renderMeshIndices->clear();
 
-	generateRenderGroup(group);
+	generateRenderGroup2(group);
 	return;
 	// THIS IS ABSOLUTE TRASH
+	// TODO: Work on ring buffer using *new* (unoptimized) render funcs
+	// 
+
+	// WIP
+	if ( prevXOrigin != newXOrigin ) {
+		if ( prevXOrigin < newXOrigin ) {
+			// Push front (Add element at decremented head)
+			s_DecrementRingBufferPointer(group->xHead);
+			s_DecrementRingBufferPointer(group->xTail);
+			for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+				group->chunksToUpdate[group->xHead][i] = true;
+			}
+		}
+		else {
+			// Push back (Add element at incremented tail)
+			s_IncrementRingBufferPointer(group->xHead);
+			s_IncrementRingBufferPointer(group->xTail);
+			for ( int i = 0; i < RENDER_DISTANCE; i++ ) {
+				group->chunksToUpdate[group->xTail][i] = true;
+			}
+		}
+	}
+	// Then need to repeat the same for z and in generateRenderGroup2, need to
+	// only generate chunks marked for updating
+	// The issue is that meshdata is stored altogether so we need to update
+	// How we store the verts & inds to render cause we need to selectively
+	// clear verts and indices instead of re-creating all
+	// WIP
 
 	// This assumes that only a movement of a chunk at a time is allowed
 	// RenderGroup stores chunks as chunks[col][col item]
@@ -558,7 +632,7 @@ void World::updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOr
 	// Need to generate connecting faces on correct indices
 	// Need to rewrite correct indices of rendermeshvertices and rendermeshindices after calling createrendermesh
 
-	if ( prevXOrigin != newXOrigin ){
+	if ( prevXOrigin != newXOrigin ) {
 		int xStart, xEnd; // Pointers for con face generation
 		bool generateChunkFlag = false;
 		if ( prevXOrigin < newXOrigin ) {

@@ -42,6 +42,7 @@ public:
 
 	typedef struct RenderGroup {
 		Chunk chunks[RENDER_DISTANCE][RENDER_DISTANCE];
+		bool chunksToUpdate[RENDER_DISTANCE][RENDER_DISTANCE];
 		float xOrigin;
 		float zOrigin;
 
@@ -119,6 +120,24 @@ private:
 	void initTestChunk();
 
 	void generateRenderGroup(RenderGroup* group);
+
+	/*
+	* KISS Philosophy
+	* It will take more computing time to omit storing chunk faces than it is 
+	* to render them out
+	* 
+	* I.e. 8 dist, worst case is 16*16*255 -> 65536 faces per chunk side
+	* 65536 * 4 sides * 64 chunks * 8 floats per vert data * 4 vert per face = 270 mb
+	* For now, worst case will not happen and minimal cases are even less significant
+	* For the sake of development, return to optimizing rendering *LATER*
+	* 
+	* TODO:
+	*	Optimize so that adjacent chunks are cleaned up
+	* 
+	*/
+	void generateRenderGroup2(RenderGroup* group); // Testing cause og function is trash
+	void createRenderMesh2(Chunk* chunk, int xOffset, int zOffset);
+
 
 	void updateRenderGroup(RenderGroup* group, float newXOrigin, float newZOrigin);
 
